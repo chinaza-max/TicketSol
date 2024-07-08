@@ -1,9 +1,12 @@
 import Image from "next/image";
 import SignupForm from "./components/form"
+import Navbar from "./components/navbar"
+
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
+    <main>
+            <Navbar/>
             <SignupForm/>
     </main>
   );

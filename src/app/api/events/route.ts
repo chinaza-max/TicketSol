@@ -14,10 +14,14 @@ import {
 interface Event {
   actionId: string;
   eventType: string;
-  price: number;
+  price1: number;
+  price2: number;
+  package1: string;
+  package2: string;
   description: string;
   eventName: string;
   expiry: string;
+  imageURL: string;
   publicAddress: PublicKey;
 }
 
@@ -37,17 +41,48 @@ const ensureDataFileExists = () => {
 
 export  const POST =async (req: Request) => {
 
-
-    const { actionId,publicAddress, eventName, eventType, price, description, expiry } =await req.json() ;
+    
+    const { actionId,publicAddress, imageURL, eventName, eventType, price1, price2, package1, package2, description, expiry } =await req.json() ;
     ensureDataFileExists();
+
+
+    try {
+      if (publicAddress) {
+       new PublicKey(publicAddress!);
+      }
+
+    } catch (err) {
+      console.log(err)
+
+      return new Response(JSON.stringify({ message: 'Invalid wallet address' }), {
+        status: 400,
+        headers: ACTIONS_CORS_HEADERS,
+      });
+    }
+
+
+      const currentDate = new Date();
+      const expiryDate = new Date(expiry);
+
+      if (expiryDate < currentDate) {
+        return new Response(JSON.stringify({ message: 'Cant use past date' }), {
+          status: 400,
+          headers: ACTIONS_CORS_HEADERS,
+        });
+      }
+    
 
     const newEvent: Event = {
       actionId,
       eventType,
-      price,
+      price1,
+      price2,
+      package1,
+      package2,
       description,
       eventName,
       expiry,
+      imageURL,
       publicAddress
     };
 
@@ -66,7 +101,6 @@ export  const POST =async (req: Request) => {
     const payload={ message: 'Event added successfully', blinkpreview: `https://dial.to/devnet?action=solana-action:http://localhost:3000/api/actions/checkout?uniqueAction=${actionId}` }
 
     
-
     return new Response(JSON.stringify(payload),{
       status: 200,
       headers: ACTIONS_CORS_HEADERS,

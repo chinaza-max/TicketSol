@@ -46,13 +46,18 @@ const filePath = path.resolve(process.cwd(), 'src/app/api/actions/checkout', 'ev
 
 interface Event {
   actionId: string;
-  type: string;
-  price: number;
+  eventType: string;
+  price1: number;
+  price2: number;
+  package1: string;
+  package2: string;
   description: string;
-  name: string;
+  eventName: string;
   expiry: string;
-  publicAddress:PublicKey;
+  imageURL: string;
+  publicAddress: PublicKey;
 }
+
 
 export const GET = async (req: Request) => {
   try {
@@ -72,8 +77,7 @@ export const GET = async (req: Request) => {
 
 
     if (!matchingObject) {
-      let message = "could not retrieve any event action";
-      return new Response(message, {
+      return new Response(JSON.stringify({ message: "could not retrieve any event action"}), {
         status: 400,
         headers: ACTIONS_CORS_HEADERS,
       });    
@@ -86,32 +90,31 @@ export const GET = async (req: Request) => {
     ).toString();
     
 
+
+
+    let actionsArray = [
+      {
+        label: matchingObject.package1+ " - "+ matchingObject.price1 +"sol", 
+        href: `${baseHref}&amount=${matchingObject.price1}&mypackage=${matchingObject.package1}`,
+       
+      }
+    ];
+
+    if (matchingObject.price2) {
+      actionsArray.push({
+        label: matchingObject.package2 + " - "+ matchingObject.price2 +"sol",
+        href: `${baseHref}&amount=${matchingObject.price2}&mypackage=${matchingObject.package1}`,
+      });
+    }
+
+
     const payload: ActionGetResponse = {
-      title: "Lap top",
-      icon:  matchingObject.ImageURL /*new URL("/download.png", requestUrl.origin).toString()*/,
-      description: "PRICE - $148.01(1sol);   QUANTITY - 1  ",
+      title: matchingObject.eventName,
+      icon:  matchingObject.imageURL /*new URL("/download.png", requestUrl.origin).toString()*/,
+      description: matchingObject.description,
       label: "Transfer", // this value will be ignored since `links.actions` exists
       links: {
-        actions: [
-          {
-            label: "Pay with SOL", // button text
-            href: `${baseHref}&amount=${"1"}`,
-            parameters: [
-             
-              {
-                name: "alternativeContact",
-                label: "Alternative Contact",
-                required: true,
-              },
-              {
-                name: "deliveryAddress",
-                label: "Address for Delivery",
-                required: true,
-              }
-            ]
-          }
-          
-        ],
+            actions: actionsArray,
       },
     };
 
@@ -135,7 +138,9 @@ export const OPTIONS = GET;
 export const POST = async (req: Request) => {
   try {
     const requestUrl = new URL(req.url);
-    const { amount, toPubkey } = validatedQueryParams(requestUrl);
+    const { amount, mypackage ,uniqueAction} = validatedQueryParams(requestUrl);
+
+
     const body: ActionPostRequest  & {
       alternativeContact: string;
       deliveryAddress: string;
@@ -154,21 +159,44 @@ export const POST = async (req: Request) => {
       });
     }
 
+    let events: Event[] = [];
+
+    if (fs.existsSync(filePath)) {
+      const fileData = fs.readFileSync(filePath, 'utf-8');
+      events = JSON.parse(fileData);
+    }
+    const matchingObject = events.find(item => item.actionId === uniqueAction);
+
+    if (!matchingObject) {
+      return new Response(JSON.stringify({ message: "could not retrieve any event action"}), {
+        status: 400,
+        headers: ACTIONS_CORS_HEADERS,
+      });    
+    }
+
+   
+
     const connection = new Connection(clusterApiUrl('devnet'));
+
+
+
+    let toPubkey: PublicKey;
+    toPubkey = new PublicKey(matchingObject.publicAddress);
+
+    const balance = await connection.getBalance(account)
+
+    const requiredBalance = amount * LAMPORTS_PER_SOL;
+
+    if (balance < requiredBalance) {
+      return new Response('Insufficient balance ', {
+        status: 400,
+        headers: ACTIONS_CORS_HEADERS,
+      });
+    }
 
     // initialize a keypair for the user
     const user = await initializeKeypair(connection);
 
-    /*
-    // ensure the receiving account will be rent exempt
-    const minimumBalance = await connection.getMinimumBalanceForRentExemption(
-      0 // note: simple accounts that just store native SOL have `0` bytes of data
-    );
-
-
-    if (amount * LAMPORTS_PER_SOL < minimumBalance) {
-      throw `account may not be rent exempt: ${toPubkey.toBase58()}`;
-    }*/
 
     const transaction = new Transaction();
 
@@ -194,8 +222,6 @@ export const POST = async (req: Request) => {
 
    
 
-
-
     const metaplex = Metaplex.make(connection)
     .use(keypairIdentity(user))
     .use(
@@ -207,10 +233,22 @@ export const POST = async (req: Request) => {
     );
     
 
+    const packageMessage =`Package Purchased: ${mypackage}` ;
+    const expiryMessage = `Expiry Date: ${matchingObject.expiry}`;
+
+    const metadataDescription = `
+    Event Type: ${matchingObject.eventType}
+    Event Name: ${matchingObject.eventName}
+    Description: ${matchingObject.description}
+    ${packageMessage}
+    ${expiryMessage}
+    `;
+
+console.log(metadataDescription);
     const nftData = {
-      name: "Laptop Purchase Receipt",
-      symbol: "LPR",
-      description: `Receipt for Laptop Purchase\nPrice: $148.01 USD\nQuantity: 1\nAlternative Contact: ${body.alternativeContact}\nDelivery Address: ${body.deliveryAddress}`,
+      name:matchingObject.eventName,
+      symbol:"Ticket",
+      description: metadataDescription,
       sellerFeeBasisPoints: 0,
       imageFile: "download.png",
     };
@@ -223,7 +261,7 @@ export const POST = async (req: Request) => {
     const payload: ActionPostResponse = await createPostResponse({
       fields: {
         transaction,
-        message: `Your purchase was successful! View your receipt as NFT in your wallet.`,
+        message: `Your purchase was successful! View your ticket as NFT in your wallet.`,
       },
     });
 /*
@@ -251,17 +289,11 @@ export const POST = async (req: Request) => {
 };
 
 function validatedQueryParams(requestUrl: URL) {
-  let toPubkey: PublicKey = DEFAULT_SOL_ADDRESS;
   let amount:number= DEFAULT_SOL_AMOUNT;
+  let uniqueAction:string= "";
+  let mypackage:string= "";
 
-  try {
-    if (requestUrl.searchParams.get("to")) {
-      toPubkey = new PublicKey(requestUrl.searchParams.get("to")!);
-    }
-  } catch (err) {
-    console.log(err)
-    throw "Invalid input query parameter: to";
-  }
+
 
   try {
     if (requestUrl.searchParams.get("amount")) {
@@ -273,9 +305,36 @@ function validatedQueryParams(requestUrl: URL) {
     throw "Invalid input query parameter: amount";
   }
 
+
+
+  
+  try {
+    if (requestUrl.searchParams.get("uniqueAction")) {
+      uniqueAction = String(requestUrl.searchParams.get("uniqueAction")!);
+    }
+    
+  } catch (err) {
+    console.log(err)
+    throw "Invalid input query parameter: amount";
+  }
+
+    
+  try {
+    if (requestUrl.searchParams.get("mypackage")) {
+      mypackage = String(requestUrl.searchParams.get("mypackage")!);
+    }
+    
+  } catch (err) {
+    console.log(err)
+    throw "Invalid package";
+  }
+
+
+
   return {
     amount,
-    toPubkey,
+    uniqueAction,
+    mypackage
   };
 }
 
